@@ -1,4 +1,4 @@
-import {Component, OnInit, ElementRef, AfterViewInit, NgZone} from '@angular/core';
+import {Component, OnInit, ApplicationRef, NgZone} from '@angular/core';
 import {GoogleApiService, GoogleAuthService} from 'ng-gapi';
 import GoogleUser = gapi.auth2.GoogleUser;
 import {MdDialog, MdDialogRef} from '@angular/material';
@@ -27,7 +27,7 @@ declare const gapi: any;
         <ul>
           <li><a class="btn-floating yellow darken-1" (click)="openDialog()"><i class="material-icons">info_outline</i></a></li>
           <li><a class="btn-floating green" (click)="listFolders()"><i class="material-icons">folder</i></a></li>
-          <li><a class="btn-floating blue" (click)="showRandomPicFromDrive()"><i class="material-icons">shuffle</i></a></li>
+          <li><a class="btn-floating blue" (click)="runAllflow()"><i class="material-icons">shuffle</i></a></li>
         </ul>
       </div>
   `,
@@ -35,14 +35,16 @@ declare const gapi: any;
 })
 export class CompComponent implements OnInit {
 
-  private user: GoogleUser;
   public txt: string;
   public currentImg: string;
   public rotationOffset: string;
   public googleAuth: GoogleAuthService;
   public currentImgData;
+  public appRef: ApplicationRef;
 
-  constructor(public dialog: MdDialog, public zone: NgZone, gapiService: GoogleApiService, gapiAuth: GoogleAuthService, googleAuth: GoogleAuthService) {
+  constructor(public dialog: MdDialog, public zone: NgZone, appRef: ApplicationRef, gapiService: GoogleApiService,
+              gapiAuth: GoogleAuthService, googleAuth: GoogleAuthService) {
+    this.appRef = appRef;
     this.googleAuth = googleAuth;
     this.txt = '';
     this.rotationOffset = 'rotate(0deg)';
@@ -98,69 +100,56 @@ export class CompComponent implements OnInit {
     });
   }
 
-  public getAllImgs() {
-    gapi.client.drive.files.list({
-      'pageSize': 1000,
-      'q': 'mimeType = "application/vnd.google-apps.folder" and trashed = false',
-      'fields': 'nextPageToken, files(id, name, webContentLink, webViewLink, createdTime, parents)'
-    }).then((response) => {
-      console.log('Files:');
-      const files = response.result.files;
-      if (files && files.length > 0) {
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          console.log(file.name + ' (' + file.id + ')' + ' webViewLink:' + file.webViewLink + ' webContentLink:' +
-            file.webContentLink + ' parents:' + file.parents);
-        }
-      } else {
-        console.error('No files found.');
-      }
-    });
-  }
-
-  public getAllFilesInFolder(folderId: string) {
-    console.log('folder id is: ' + folderId);
-    const query: string = '"%s" in parents and trashed = false'.replace('%s', folderId);
-    gapi.client.drive.files.list({
-      'pageSize': 1000,
-      'q': query,
-    }).then((response) => {
-      console.log(response);
-    });
-  }
-
-  public showRandomPicFromDrive() {
-    // this ID: 1tCTU7t5Y3IkVmZgrzhGcctjQA9bqDw9Av2z2RS4Pjss is google photos folder ID in gDrive
-    const folderQuery = '"1tCTU7t5Y3IkVmZgrzhGcctjQA9bqDw9Av2z2RS4Pjss" in parents and trashed = false and mimeType = "application/vnd.google-apps.folder"'
-    gapi.client.drive.files.list({
-      'pageSize': 1000,
-      'q': 'mimeType = "application/vnd.google-apps.folder" and trashed = false',
-      'fields': 'nextPageToken, files(id, name, webContentLink, webViewLink, createdTime, parents)'
-    }).then((response) => {
-      console.log('Files:');
-      const files = response.result.files;
-      if (files && files.length > 0) {
+  /**
+   * the method returns all google drive folders under /photos directory and choose random folder from the list
+   * this ID: 1tCTU7t5Y3IkVmZgrzhGcctjQA9bqDw9Av2z2RS4Pjss is google photos folder ID in gDrive
+   * @returns {string folder ID from gDrive}
+   */
+  public getRandomFolder(): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const folderQuery = '"1tCTU7t5Y3IkVmZgrzhGcctjQA9bqDw9Av2z2RS4Pjss" in parents and trashed = false and ' +
+        'mimeType = "application/vnd.google-apps.folder"'
+      gapi.client.drive.files.list({
+        'pageSize': 1000,
+        'q': 'mimeType = "application/vnd.google-apps.folder" and trashed = false',
+        'fields': 'nextPageToken, files(id, name, webContentLink, webViewLink, createdTime, parents)'
+      }).then((response) => {
+        const files = response.result.files;
         const randomFolder = files[Math.floor(Math.random() * files.length)];
         console.log('** folder id is: ' + randomFolder.id);
-        const query: string = '"%s" in parents and trashed = false and mimeType != "application/vnd.google-apps.folder"'
-          .replace('%s', randomFolder.id);
-        gapi.client.drive.files.list({
-          'pageSize': 1000,
-          'q': query,
-          'fields': 'files(id, name, webContentLink, webViewLink, createdTime, parents, imageMediaMetadata)'
-        }).then((response) => {
-          const imgs = response.result.files;
-          this.currentImgData = imgs[Math.floor(Math.random() * imgs.length)];
-          console.log('going to display' + this.currentImgData.id + ' date: ' + this.currentImgData.createdTime + ' rotation: ' +
-            this.currentImgData.imageMediaMetadata.rotation);
-          console.log(this.currentImgData);
+        resolve(randomFolder.id);
+      });
+    });
+  }
 
-          this.fixImgRotation(this.currentImgData.imageMediaMetadata.rotation);
-          this.currentImg = 'https://drive.google.com/uc?id=' + this.currentImgData.id;
-        });
-      } else {
-        console.error('No files found.');
-      }
+  public getRandomImg(folderId: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const query: string = '"%s" in parents and trashed = false and mimeType != "application/vnd.google-apps.folder" and mimeType contains "image/"'
+        .replace('%s', folderId);
+      gapi.client.drive.files.list({
+        'pageSize': 1000,
+        'q': query,
+        'fields': 'files(id, name, webContentLink, webViewLink, createdTime, parents, imageMediaMetadata)'
+      }).then((response) => {
+        const imgs = response.result.files;
+        this.currentImgData = imgs[Math.floor(Math.random() * imgs.length)];
+        console.log('going to display' + this.currentImgData.id + ' date: ' + this.currentImgData.createdTime + ' rotation: ' +
+          this.currentImgData.imageMediaMetadata.rotation);
+        console.log(this.currentImgData);
+        resolve(this.currentImgData);
+      });
+    });
+  }
+
+  public runAllflow() {
+    this.getRandomFolder().then((folderId) => {
+      console.log('got the following folder ID: ' + folderId);
+      this.getRandomImg(folderId).then((img) => {
+        console.log('got the following image data: ' + img);
+        this.fixImgRotation(img.imageMediaMetadata.rotation);
+        this.currentImg = 'https://drive.google.com/uc?id=' + img.id;
+        // this.appRef.tick();
+      });
     });
   }
 
@@ -179,7 +168,7 @@ export class CompComponent implements OnInit {
   }
 
   public openDialog() {
-    let dialogRef = this.dialog.open(InfoDialogComponent);
+    const dialogRef = this.dialog.open(InfoDialogComponent);
     dialogRef.componentInstance.metadata = this.currentImgData;
     dialogRef.afterClosed().subscribe(result => {
       console.log('got the following result from dialog ' + result);
